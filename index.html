@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>효소 궤적</title>
+  <meta name="description" content="수식으로 궤적을 설계해 효소를 쏘고, 활성화 에너지 장벽을 넘어 기질을 분해하는 통합과학 게임">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- 시작 화면 -->
+  <section id="screen-start" class="screen active">
+    <div class="start-wrap">
+      <p class="eyebrow">고1 통합과학 · 효소와 활성화 에너지</p>
+      <h1>효소 궤적</h1>
+      <p class="lead">수식 <b>y = f(x)</b>로 궤적을 그려 효소를 쏘세요.<br>
+        효소가 기질에 닿으면 <b>활성화 에너지 장벽</b>이 낮아지고, 분자 에너지가 그 장벽을 넘을 때 반응이 일어납니다.</p>
+      <div class="rule-card">
+        <div class="rule-title">이 게임의 단 하나의 규칙</div>
+        <div class="rule-eq">반응 성공 ⇔ 분자 에너지(온도) ≥ 활성화 에너지</div>
+        <div class="rule-sub">효소는 에너지를 주지 않습니다. <b>장벽을 낮출 뿐</b>입니다. 단, 맞는 기질·변성되지 않은 상태·알맞은 pH일 때만.</div>
+      </div>
+      <form id="student-form" class="student-form">
+        <label>학번 <input id="in-sid" autocomplete="off" placeholder="예: 10315" maxlength="12"></label>
+        <label>이름 <input id="in-name" autocomplete="off" placeholder="이름" maxlength="20"></label>
+      </form>
+      <h2 class="stage-list-title">스테이지</h2>
+      <ol id="stage-list" class="stage-list"></ol>
+      <div class="start-actions">
+        <button id="btn-results" class="btn ghost" type="button">내 기록 보기 · 제출 파일</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 게임 화면 -->
+  <section id="screen-game" class="screen">
+    <header class="game-head">
+      <button id="btn-back" class="btn ghost small" type="button" aria-label="스테이지 목록으로">← 목록</button>
+      <div class="stage-name"><span id="hud-stage-no"></span><b id="hud-stage-title"></b></div>
+      <div class="hud">
+        <span title="남은 발사 수">발사 <b id="hud-shots"></b></span>
+        <span title="남은 기질">기질 <b id="hud-left"></b></span>
+        <span title="50°C 이상으로 쏜 횟수">세포 손상 <b id="hud-damage"></b></span>
+      </div>
+    </header>
+    <div class="game-body">
+      <div class="field-col">
+        <div class="briefing"><span class="concept" id="stage-concept"></span><p id="stage-briefing"></p></div>
+        <div class="canvas-wrap"><canvas id="field" width="900" height="600" aria-label="게임 필드"></canvas><div id="toast" class="toast" aria-live="polite" hidden></div></div>
+        <p class="coord-note">좌표: x 0~30, y −10~10 · 궤적은 발사대에서 출발하도록 자동으로 평행이동됩니다: <code>y = f(x) − f(x₀) + y₀</code></p>
+      </div>
+      <aside class="panel">
+        <div class="panel-block">
+          <div class="panel-label">① 효소 장전</div>
+          <div id="enzyme-list" class="enzyme-list" role="radiogroup" aria-label="효소 선택"></div>
+        </div>
+        <div class="panel-block" id="temp-block">
+          <div class="panel-label">② 반응 온도 <b id="temp-val"></b></div>
+          <input id="temp" type="range" min="0" max="100" step="1" aria-label="반응 온도">
+          <div class="temp-scale"><span>0°C</span><span>37°C 체온</span><span>100°C</span></div>
+        </div>
+        <div class="panel-block">
+          <div class="panel-label">③ 궤적 수식</div>
+          <div class="fx-row"><span class="fx-y">y =</span><input id="fx" autocomplete="off" spellcheck="false" placeholder="예: 0.5x"></div>
+          <div id="fx-error" class="fx-error" role="alert"></div>
+          <div class="chips" id="fx-chips"></div>
+        </div>
+        <div class="panel-block" id="predict-block">
+          <div class="panel-label">④ 예측: 처음 만나는 기질은?</div>
+          <div class="predict-row">
+            <label><input type="radio" name="predict" value="react"> 분해된다</label>
+            <label><input type="radio" name="predict" value="bounce"> 분해 안 된다</label>
+          </div>
+        </div>
+        <button id="btn-fire" class="btn primary fire" type="button">발사 <kbd>Enter</kbd></button>
+        <div class="panel-block">
+          <div class="panel-label">에너지 도표 <select id="diagram-sub" aria-label="도표로 볼 기질"></select></div>
+          <canvas id="diagram" width="360" height="210" aria-label="에너지 도표"></canvas>
+          <div id="diagram-verdict" class="diagram-verdict"></div>
+        </div>
+        <div class="panel-block">
+          <div class="panel-label">반응 기록</div>
+          <ol id="log" class="log" aria-live="polite"></ol>
+        </div>
+        <button id="btn-help" class="btn ghost small" type="button">수식 도움말</button>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 결과 화면 -->
+  <section id="screen-results" class="screen">
+    <div class="start-wrap">
+      <button id="btn-results-back" class="btn ghost small" type="button">← 처음으로</button>
+      <h1>내 기록</h1>
+      <p class="lead" id="results-who"></p>
+      <div class="table-wrap"><table id="results-table" class="results-table"></table></div>
+      <h2 class="stage-list-title">오개념 신호 (실패 원인 합계)</h2>
+      <div id="results-reasons" class="reasons"></div>
+      <div class="start-actions">
+        <button id="btn-download" class="btn primary" type="button">제출 파일 저장 (JSON)</button>
+        <button id="btn-copy" class="btn ghost" type="button">요약 복사</button>
+        <button id="btn-reset" class="btn danger small" type="button">기록 초기화</button>
+      </div>
+      <p id="copy-msg" class="copy-msg" role="status"></p>
+    </div>
+  </section>
+
+  <!-- 모달 -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h2 id="modal-title"></h2>
+      <div id="modal-body"></div>
+      <div class="modal-actions" id="modal-actions"></div>
+    </div>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/parser.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
