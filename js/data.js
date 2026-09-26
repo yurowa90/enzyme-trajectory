@@ -152,6 +152,102 @@
     },
   ];
 
-  root.GameData = { SUBSTRATES, ENZYMES, STAGES, DAMAGE_T };
+
+  /* ================= 2부: 물질대사 — TCA 회로 (생명과학 심화) =================
+   * 메커니즘 반전: 발사체 = 기질 분자, 효소 = 필드에 고정된 관문(gate).
+   * 분자가 맞는 관문을 지나면 다음 중간 산물로 바뀌고 부산물이 나온다.
+   * 맞지 않는 관문(또는 억제된 관문)에 닿으면 반응 없이 튕겨 나간다(1부 스테이지 2와 같은 규칙).
+   */
+  const MOLECULES = {
+    pyruvate:  { name: '피루브산',            C: 3, color: '#f4a261' },
+    acetylcoa: { name: '아세틸 CoA',          C: 2, color: '#e9c46a' },
+    citrate:   { name: '시트르산',            C: 6, color: '#2a9d8f' },
+    isocitrate:{ name: '아이소시트르산',      C: 6, color: '#43aa8b' },
+    akg:       { name: 'α-케토글루타르산',    C: 5, color: '#4d908e' },
+    succoa:    { name: '석시닐 CoA',          C: 4, color: '#577590' },
+    succinate: { name: '석신산',              C: 4, color: '#277da1' },
+    fumarate:  { name: '푸마르산',            C: 4, color: '#9b5de5' },
+    malate:    { name: '말산',                C: 4, color: '#f15bb5' },
+    oaa:       { name: '옥살아세트산',        C: 4, color: '#e76f51' },
+  };
+  // out: 생성(+) / 소비(-). h2o 는 소비를 음수로 적는다. 회로 한 바퀴 합: CO2 2, NADH 3, FADH2 1, ATP(GTP) 1, H2O -2
+  const GATES = {
+    pdh:   { name: '피루브산 탈수소 효소 복합체', short: ['피루브산', '탈수소'], from: 'pyruvate',  to: 'acetylcoa', out: { co2: 1, nadh: 1 }, note: 'CoA가 결합하고 CO₂가 빠져나간다(탈탄산). 미토콘드리아 기질에서 일어난다.' },
+    cs:    { name: '시트르산 합성 효소',          short: ['시트르산', '합성'],   from: 'acetylcoa', to: 'citrate',   out: { h2o: -1 }, note: '아세틸 CoA(2C) + 옥살아세트산(4C) → 시트르산(6C). 물이 들어가고 CoA가 떨어져 나간다.' },
+    aco:   { name: '아코니테이스',                short: ['아코니', '테이스'],   from: 'citrate',   to: 'isocitrate', out: {}, note: '시트르산의 구조를 바꾼다(이성질화). 물이 빠졌다가 다시 들어가 알짜 변화는 없다.' },
+    idh:   { name: '아이소시트르산 탈수소 효소',  short: ['아이소시트르산', '탈수소'], from: 'isocitrate', to: 'akg', out: { co2: 1, nadh: 1 }, note: '산화(NAD⁺ → NADH)와 탈탄산(CO₂ 방출)이 함께 일어난다. 6C → 5C.' },
+    akgdh: { name: 'α-케토글루타르산 탈수소 효소 복합체', short: ['α-KG', '탈수소'], from: 'akg', to: 'succoa', out: { co2: 1, nadh: 1 }, note: '두 번째 탈탄산. 5C → 4C. 피루브산 탈수소 효소 복합체와 구조가 닮았다.' },
+    scs:   { name: '석시닐 CoA 합성 효소',        short: ['석시닐CoA', '합성'],  from: 'succoa',    to: 'succinate', out: { atp: 1 }, note: '기질 수준 인산화: GTP(조직에 따라 ATP)가 만들어진다.' },
+    sdh:   { name: '석신산 탈수소 효소',          short: ['석신산', '탈수소'],   from: 'succinate', to: 'fumarate',  out: { fadh2: 1 }, note: 'FAD → FADH₂. 미토콘드리아 내막에 박혀 있는 유일한 TCA 회로 효소다.' },
+    fum:   { name: '푸마레이스',                  short: ['푸마', '레이스'],     from: 'fumarate',  to: 'malate',    out: { h2o: -1 }, note: '푸마르산에 물이 더해진다(수화).' },
+    mdh:   { name: '말산 탈수소 효소',            short: ['말산', '탈수소'],     from: 'malate',    to: 'oaa',       out: { nadh: 1 }, note: 'NADH가 만들어지고 옥살아세트산이 재생되어 회로가 다시 돈다.' },
+  };
+  const TCA_ORDER = ['acetylcoa', 'citrate', 'isocitrate', 'akg', 'succoa', 'succinate', 'fumarate', 'malate', 'oaa'];
+
+  const g = (enz, x, y, extra) => Object.assign({ enz, x, y, r: 0.9 }, extra || {});
+  STAGES.push(
+    {
+      id: 7, chapter: 2, type: 'pathway', title: '피루브산 산화', concept: '물질대사는 효소 반응이 차례로 이어진 경로다',
+      briefing: '이번에는 효소가 아니라 분자를 쏩니다. 효소는 필드에 고정된 관문입니다. 피루브산이 알맞은 관문을 차례로 지나 시트르산이 되게 하세요. 맞지 않는 관문에 닿으면 튕겨 나갑니다.',
+      shooter: { x: 1, y: -4 }, start: 'pyruvate', target: 'citrate',
+      gates: [g('pdh', 8, -1), g('cs', 8, -6), g('aco', 8, 4), g('cs', 16, 2), g('idh', 16, -4), g('pdh', 16, 7)],
+      walls: [], shots: 5, par: 1, predictLedger: false,
+      solution: [{ f: '0.43x' }],
+      reflection: '피루브산(3C)이 아세틸 CoA(2C)가 될 때 탄소 1개는 어디로 갔나요? 생성물 장부를 근거로 쓰세요.',
+    },
+    {
+      id: 8, chapter: 2, type: 'pathway', title: 'TCA 회로 전반부', concept: '탈탄산과 산화: CO₂와 NADH가 나온다',
+      briefing: '아세틸 CoA를 쏘아 석시닐 CoA까지 가게 하세요. 각 세로줄에는 효소 관문이 여러 개 있습니다. 다음 단계에 맞는 효소를 골라 지나가야 합니다. 효소 이름은 대개 “기질 이름 + 하는 일”로 지어집니다.',
+      shooter: { x: 1, y: 0 }, start: 'acetylcoa', target: 'succoa',
+      gates: [
+        g('cs', 6, 4.8), g('aco', 6, 0), g('idh', 6, -5),
+        g('aco', 12, 7.2), g('idh', 12, 2.5), g('cs', 12, -4),
+        g('idh', 18, 6), g('akgdh', 18, 1), g('aco', 18, -5),
+        g('akgdh', 24, 1.2), g('idh', 24, 6), g('sdh', 24, -4),
+      ],
+      walls: [], shots: 6, par: 1, predictLedger: false,
+      solution: [{ f: '-0.05(x-1)(x-25)' }],
+      reflection: '시트르산(6C)에서 석시닐 CoA(4C)가 되는 동안 줄어든 탄소 2개와 늘어난 NADH 2개는 각각 어떤 반응 때문인가요?',
+    },
+    {
+      id: 9, chapter: 2, type: 'pathway', title: 'TCA 회로 후반부 · 경쟁적 억제', concept: '에너지 저장 분자 생성과 효소 억제',
+      briefing: '석시닐 CoA를 쏘아 옥살아세트산까지 가게 하세요. 주의: 가운데 줄의 석신산 탈수소 효소 하나에는 말론산이 붙어 있습니다. 말론산은 석신산과 모양이 닮아 활성 부위를 차지하는 경쟁적 저해제입니다. 억제되지 않은 관문을 찾으세요.',
+      shooter: { x: 1, y: 2 }, start: 'succoa', target: 'oaa',
+      gates: [
+        g('scs', 6, -1.6), g('sdh', 6, 4), g('fum', 6, -6.5),
+        g('sdh', 12, 1.2, { inhibitor: 'malonate' }), g('sdh', 12, -3.7), g('scs', 12, -8),
+        g('fum', 18, -3.2), g('mdh', 18, 1.5), g('sdh', 18, -8),
+        g('mdh', 24, -0.2), g('fum', 24, -5), g('scs', 24, 5),
+      ],
+      walls: [], shots: 6, par: 2, predictLedger: false,
+      solution: [{ f: '-0.9(x-1) + 0.035(x-1)^2' }],
+      reflection: '말론산이 붙은 관문에서는 왜 반응이 일어나지 않았나요? “활성 부위”, “구조가 비슷하다”를 넣어 설명하고, 이 억제가 세포의 ATP 생산에 어떤 영향을 줄지 추론하세요.',
+    },
+    {
+      id: 10, chapter: 2, type: 'pathway', title: 'TCA 회로 한 바퀴', concept: '회로 한 바퀴의 물질·에너지 수지',
+      briefing: '아세틸 CoA를 쏘아 회로를 한 바퀴 돌려 옥살아세트산을 되찾으세요. 발사 전에 이번 한 바퀴에서 나올 CO₂·NADH·FADH₂·ATP(GTP)와 들어갈 물의 수를 먼저 예측합니다. 정답 관문들은 매끄러운 곡선 위에 있습니다. 어떤 함수가 어울릴까요?',
+      shooter: { x: 1, y: 0 }, start: 'acetylcoa', target: 'oaa',
+      gates: [
+        g('cs', 4, 3.95), g('aco', 4, -2),
+        g('aco', 7, 6.52), g('idh', 7, 1.5), g('cs', 7, -4),
+        g('idh', 10, 6.82), g('akgdh', 10, 2), g('scs', 10, -4),
+        g('akgdh', 13, 4.74), g('aco', 13, -0.5),
+        g('scs', 16, 0.99), g('sdh', 16, 6), g('fum', 16, -4),
+        g('sdh', 19, -3.08), g('fum', 19, 2), g('mdh', 19, -8.5),
+        g('fum', 22, -6.1), g('mdh', 22, -1), g('scs', 22, 4),
+        g('mdh', 25, -6.97), g('fum', 25, -2), g('sdh', 25, 4),
+      ],
+      walls: [], shots: 6, par: 1, predictLedger: true,
+      solution: [{ f: '7sin((x-1)/5)' }],
+      reflection: '회로 한 바퀴에서 CO₂ 2개가 나갔습니다. 들어온 아세틸 CoA의 탄소 수와 비교해 “탄소가 보존된다”는 관점에서 설명하세요. 또 NADH와 FADH₂는 이후 어디에서 쓰이나요?',
+    },
+  );
+
+  STAGES.forEach(st => {
+    if (!st.chapter) st.chapter = 1;
+    if (st.type === 'pathway') Object.assign(st, { blocks: [], zones: [], enzymes: [], tempControl: false, predict: false, defaultT: 37, fieldPH: 7.8 });
+  });
+
+  root.GameData = { SUBSTRATES, ENZYMES, STAGES, DAMAGE_T, MOLECULES, GATES, TCA_ORDER };
   if (typeof module !== 'undefined') module.exports = root.GameData;
 })(typeof window !== 'undefined' ? window : globalThis);

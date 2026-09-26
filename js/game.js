@@ -1,6 +1,6 @@
 /* 효소 궤적 — 화면 제어 */
 (function () {
-  const { SUBSTRATES, ENZYMES, STAGES, DAMAGE_T } = window.GameData;
+  const { SUBSTRATES, ENZYMES, STAGES, DAMAGE_T, MOLECULES, GATES, TCA_ORDER } = window.GameData;
   const { parse } = window.MathParser;
   const Engine = window.Engine;
   const STORE_KEY = 'enzymeTrajectory.v1';
@@ -25,7 +25,8 @@
 
   /* ---------- 상태 ---------- */
   let stage = null, S = null;
-  const REASON_LABEL = { mismatch: '기질 불일치', denatured: '효소 변성', ph: 'pH 부적합', cold: '저온(에너지 부족)', energy: '효소 없이 에너지 부족' };
+  const REASON_LABEL = { mismatch: '기질 불일치', denatured: '효소 변성', ph: 'pH 부적합', cold: '저온(에너지 부족)', energy: '효소 없이 에너지 부족', wrong: '관문 효소 불일치', inhibited: '억제된 효소(말론산)' };
+  const isPW = () => stage && stage.type === 'pathway';
 
   function newState(st) {
     return {
@@ -44,6 +45,10 @@
       lastEval: null,
       busy: false,
       particles: [],
+      molecule: st.start,       // 2부: 현재(마지막 발사) 분자
+      liveLedger: null,         // 2부: 마지막 발사의 생성물 장부
+      ledgerPred: null,         // 2부: 한 바퀴 수지 예측
+      completedLedger: null,
     };
   }
 
@@ -60,7 +65,7 @@
   }
 
   function stageUnlocked(i) {
-    if (i === 0) return true;
+    if (i === 0 || STAGES[i].chapter !== STAGES[i - 1].chapter) return true; // 각 부의 첫 스테이지는 항상 열림
     const prev = store.stages[STAGES[i - 1].id];
     return !!(prev && prev.attempts && prev.attempts.length);
   }
@@ -68,7 +73,14 @@
   function renderStageList() {
     const ol = $('stage-list');
     ol.innerHTML = '';
+    const CH = { 1: ['1부 · 효소의 성질', '고1 통합과학'], 2: ['2부 · 물질대사: TCA 회로', '생명과학 심화'] };
     STAGES.forEach((st, i) => {
+      if (i === 0 || STAGES[i - 1].chapter !== st.chapter) {
+        const h = document.createElement('li');
+        h.className = 'chapter-head';
+        h.innerHTML = `${CH[st.chapter][0]}<small>${CH[st.chapter][1]}</small>`;
+        ol.appendChild(h);
+      }
       const rec = store.stages[st.id];
       const li = document.createElement('li');
       const b = document.createElement('button');
@@ -102,15 +114,24 @@
     $('fx-error').textContent = '';
     $('log').innerHTML = '';
     $('toast').hidden = true; $('toast').innerHTML = ''; delete $('toast').dataset.level;
-    renderEnzymes();
+    const pw = st.type === 'pathway';
+    $('enzyme-label').textContent = pw ? '① 발사체와 효소 관문' : '① 효소 장전';
+    $('diagram-label').textContent = pw ? 'TCA 회로 지도 · 생성물 장부' : '에너지 도표';
+    $('diagram-sub').hidden = pw;
+    $('hud-left-label').textContent = pw ? '목표' : '기질';
+    $('hud-damage-wrap').hidden = pw;
+    $('ledger-predict-block').hidden = !st.predictLedger;
+    document.querySelectorAll('#ledger-predict-block input').forEach(el => { el.value = ''; el.disabled = false; });
+    if (pw) renderGateLegend(); else { renderEnzymes(); renderDiagramSelect(); }
     renderChips();
-    renderDiagramSelect();
     updateHUD();
     updateTemp();
     show('screen-game');
     drawField();
     drawDiagram();
-    addLog('shot', `임무: 기질 ${st.blocks.length}개 분해 · 발사 ${st.shots}회 · 목표 ${st.par}발 이내`);
+    addLog('shot', pw
+      ? `임무: ${MOLECULES[st.start].name} → ${MOLECULES[st.target].name} · 발사 ${st.shots}회 · 목표 ${st.par}발 이내`
+      : `임무: 기질 ${st.blocks.length}개 분해 · 발사 ${st.shots}회 · 목표 ${st.par}발 이내`);
     $('fx').focus();
   }
 
@@ -143,6 +164,16 @@
     });
   }
 
+  // 2부: 효소 관문 목록(반응 내용은 숨긴다 — 어떤 효소가 다음 단계인지 판단하는 것이 과제)
+  function renderGateLegend() {
+    const box = $('enzyme-list');
+    const m = MOLECULES[stage.start];
+    const ids = [...new Set(stage.gates.map(gt => gt.enz))];
+    box.innerHTML = `<div class="gate-item projectile"><span class="dot" style="background:${m.color}"></span><b>발사체: ${m.name} (${m.C}C)</b><small>목표: ${MOLECULES[stage.target].name}</small></div>` +
+      ids.map(id => `<div class="gate-item"><span class="dot"></span><b>${GATES[id].name}</b></div>`).join('') +
+      (stage.gates.some(gt => gt.inhibitor) ? '<div class="gate-item"><span class="dot" style="border-color:#b91c1c"></span><b>빗금 + 말론산 표시</b><small>말론산에 억제된 관문</small></div>' : '');
+  }
+
   const CHIPS = ['0.5x', '-0.5x', '0.1(x-1)(x-15)', '-0.2(x-1)(x-17)', '3sin(x/3)', '0.0005x^3', 'abs(x-10)'];
   function renderChips() {
     const box = $('fx-chips');
@@ -165,11 +196,12 @@
 
   function updateHUD() {
     $('hud-shots').textContent = `${S.shotsLeft}/${stage.shots}`;
-    $('hud-left').textContent = S.alive.length;
+    $('hud-left').textContent = isPW() ? MOLECULES[stage.target].name : S.alive.length;
     $('hud-damage').textContent = S.damage;
   }
   function updateTemp() {
     S.T = +$('temp').value;
+    if (isPW()) return;
     const e = ENZYMES[S.enzyme];
     let note = '';
     if (S.T >= DAMAGE_T) note = ' ⚠ 세포 손상';
@@ -245,18 +277,25 @@
       ctx.fillText(sub.icon, sx(b.x), sy(b.y));
       ctx.textBaseline = 'alphabetic';
     }
-    // 분해 파티클
+    // 효소 관문(2부)
+    if (isPW()) stage.gates.forEach(drawGate);
+    // 분해 파티클 · 생성물 글자
     for (const p of S.particles) {
       ctx.globalAlpha = Math.max(0, p.life);
       ctx.fillStyle = p.color;
-      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+      if (p.text) {
+        ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText(p.text, p.x, p.y);
+      } else {
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
     // 발사대
-    const e = ENZYMES[S.enzyme];
+    const shooterColor = isPW() ? MOLECULES[stage.start].color : ENZYMES[S.enzyme].color;
     const { x: shx, y: shy } = stage.shooter;
     ctx.beginPath(); ctx.arc(sx(shx), sy(shy), 0.55 * unit, 0, Math.PI * 2);
-    ctx.fillStyle = e.color; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = css('--surface'); ctx.stroke();
+    ctx.fillStyle = shooterColor; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = css('--surface'); ctx.stroke();
     // 날아가는 효소
     if (proj) {
       ctx.strokeStyle = proj.color; ctx.lineWidth = 3;
@@ -268,7 +307,40 @@
         ctx.fillStyle = '#6b7280'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
         ctx.fillText('변성', sx(head.x), sy(head.y) - 14);
       }
+      if (proj.label) {
+        ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+        ctx.lineWidth = 4; ctx.strokeStyle = css('--field-bg'); ctx.strokeText(proj.label, sx(head.x), sy(head.y) - 14);
+        ctx.fillStyle = css('--ink'); ctx.fillText(proj.label, sx(head.x), sy(head.y) - 14);
+      }
     }
+  }
+
+  function drawGate(gt) {
+    const def = GATES[gt.enz], cx = sx(gt.x), cy = sy(gt.y), half = gt.r * unit;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(cx - half, cy - half, half * 2, half * 2, 8); else ctx.rect(cx - half, cy - half, half * 2, half * 2);
+    ctx.fillStyle = css('--surface'); ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = gt.inhibitor ? '#b91c1c' : css('--ink-2'); ctx.stroke();
+    if (gt.inhibitor) {
+      ctx.save(); ctx.clip();
+      ctx.strokeStyle = 'rgba(185, 28, 28, .25)'; ctx.lineWidth = 3;
+      for (let k = -2 * half; k < 2 * half; k += 8) { ctx.beginPath(); ctx.moveTo(cx - half + k, cy - half); ctx.lineTo(cx - half + k + 2 * half, cy + half); ctx.stroke(); }
+      ctx.restore();
+    }
+    ctx.textAlign = 'center'; ctx.font = 'bold 10px sans-serif';
+    def.short.forEach((line, k) => {
+      const ty = cy - 3 + k * 12;
+      ctx.lineWidth = 3; ctx.strokeStyle = css('--surface'); ctx.strokeText(line, cx, ty);
+      ctx.fillStyle = css('--ink'); ctx.fillText(line, cx, ty);
+    });
+    if (gt.inhibitor) {
+      ctx.fillStyle = '#b91c1c'; ctx.font = 'bold 11px sans-serif';
+      ctx.fillText('말론산', cx, cy - half - 5);
+    }
+  }
+
+  function floatText(x, y, text, color, dy) {
+    S.particles.push({ x: sx(x), y: sy(y), vx: (Math.random() - 0.5) * 0.6, vy: dy, r: 0, life: 1.6, color, text });
   }
 
   function burst(x, y, color) {
@@ -285,6 +357,7 @@
   /* ---------- 에너지 도표 ---------- */
   const dv = $('diagram'), dctx = dv.getContext('2d');
   function drawDiagram() {
+    if (isPW()) { drawCycle(); return; }
     const DW = dv.width, DH = dv.height;
     dctx.clearRect(0, 0, DW, DH);
     dctx.fillStyle = css('--surface'); dctx.fillRect(0, 0, DW, DH);
@@ -347,6 +420,59 @@
       (ev.preview && stage.zones.length ? '<br>※ 구역에 들어가면 조건이 달라질 수 있습니다.' : '');
   }
 
+  /* ---------- TCA 회로 지도 · 생성물 장부 (2부) ---------- */
+  const CYCLE = ['citrate', 'isocitrate', 'akg', 'succoa', 'succinate', 'fumarate', 'malate', 'oaa'];
+  const SHORT = { citrate: '시트르산', isocitrate: '아이소시트르산', akg: 'α-케토글루타르산', succoa: '석시닐 CoA', succinate: '석신산', fumarate: '푸마르산', malate: '말산', oaa: '옥살아세트산', acetylcoa: '아세틸 CoA', pyruvate: '피루브산' };
+  function drawCycle() {
+    const DW = dv.width, DH = dv.height;
+    dctx.clearRect(0, 0, DW, DH);
+    dctx.fillStyle = css('--surface'); dctx.fillRect(0, 0, DW, DH);
+    const cx = 112, cy = 112, R = 58;
+    const cur = S.molecule;
+    const pos = CYCLE.map((m, k) => { const a = -Math.PI / 2 + (k + 0.5) * (2 * Math.PI / 8); return { m, x: cx + R * Math.cos(a), y: cy + R * Math.sin(a), a }; });
+    // 고리
+    dctx.strokeStyle = css('--axis'); dctx.lineWidth = 2;
+    dctx.beginPath(); dctx.arc(cx, cy, R, 0, Math.PI * 2); dctx.stroke();
+    // 회전 방향 화살표(시계 방향)
+    dctx.fillStyle = css('--axis');
+    dctx.beginPath(); dctx.moveTo(cx + R + 5, cy - 4); dctx.lineTo(cx + R - 5, cy - 4); dctx.lineTo(cx + R, cy + 5); dctx.fill();
+    // 아세틸 CoA 진입
+    const top = { x: cx, y: cy - R };
+    dctx.strokeStyle = css('--ink-2'); dctx.lineWidth = 1.5;
+    dctx.beginPath(); dctx.moveTo(top.x, 14); dctx.lineTo(top.x, top.y - 4); dctx.stroke();
+    dctx.fillStyle = cur === 'acetylcoa' ? MOLECULES.acetylcoa.color : css('--ink-2');
+    dctx.font = `${cur === 'acetylcoa' ? 'bold ' : ''}10px sans-serif`; dctx.textAlign = 'center';
+    dctx.fillText(cur === 'pyruvate' ? '피루브산 → 아세틸 CoA' : '아세틸 CoA', top.x, 11);
+    pos.forEach(p => {
+      const on = p.m === cur;
+      dctx.beginPath(); dctx.arc(p.x, p.y, on ? 12 : 9, 0, Math.PI * 2);
+      dctx.fillStyle = on ? MOLECULES[p.m].color : css('--surface-2'); dctx.fill();
+      dctx.lineWidth = on ? 3 : 1.5; dctx.strokeStyle = on ? css('--ink') : css('--axis'); dctx.stroke();
+      dctx.fillStyle = on ? '#1d232a' : css('--ink-2'); dctx.font = 'bold 9px sans-serif'; dctx.textBaseline = 'middle';
+      dctx.fillText(`${MOLECULES[p.m].C}C`, p.x, p.y);
+      dctx.textBaseline = 'alphabetic';
+      const lx = p.x + Math.cos(p.a) * 20, ly = p.y + Math.sin(p.a) * 18 + 3;
+      dctx.textAlign = Math.cos(p.a) > 0.3 ? 'left' : Math.cos(p.a) < -0.3 ? 'right' : 'center';
+      dctx.font = `${on ? 'bold ' : ''}10px sans-serif`; dctx.fillStyle = on ? css('--ink') : css('--ink-2');
+      dctx.fillText(p.m === 'akg' ? 'α-KG' : SHORT[p.m], lx, ly);
+    });
+    // 장부
+    const L = S.liveLedger || { co2: 0, nadh: 0, fadh2: 0, atp: 0, h2o: 0 };
+    const rows = [['CO₂ 나감', L.co2], ['NADH', L.nadh], ['FADH₂', L.fadh2], ['ATP(GTP)', L.atp], ['H₂O 들어감', -L.h2o]];
+    const x0 = 272; // 오른쪽 라벨(아이소시트르산)과 겹치지 않게
+    dctx.textAlign = 'left'; dctx.fillStyle = css('--ink-2'); dctx.font = 'bold 11px sans-serif';
+    dctx.fillText('생성물 장부', x0, 40);
+    dctx.font = '11px sans-serif'; dctx.fillText('(이번 발사)', x0, 54);
+    rows.forEach(([k, v], i) => {
+      const y = 80 + i * 22;
+      dctx.fillStyle = css('--ink-2'); dctx.font = '11px sans-serif'; dctx.textAlign = 'left'; dctx.fillText(k, x0, y);
+      dctx.fillStyle = css('--ink'); dctx.font = 'bold 15px sans-serif'; dctx.textAlign = 'right'; dctx.fillText(String(v), DW - 6, y);
+    });
+    dctx.textAlign = 'left';
+    const m = MOLECULES[cur];
+    $('diagram-verdict').innerHTML = `현재 분자: <b>${m.name} (${m.C}C)</b> · 목표: ${MOLECULES[stage.target].name}`;
+  }
+
   /* ---------- 기록 ---------- */
   function addLog(cls, text) {
     const li = document.createElement('li');
@@ -382,6 +508,7 @@
 
   /* ---------- 발사 ---------- */
   function fire() {
+    if (isPW()) return firePathway();
     if (S.busy || S.shotsLeft <= 0 || !S.alive.length) return;
     let fn;
     try { fn = parse($('fx').value); fn(stage.shooter.x); }
@@ -462,12 +589,94 @@
     requestAnimationFrame(frame);
   }
 
+  /* ---------- 2부 발사 ---------- */
+  const LEDGER_KEYS = ['co2', 'nadh', 'fadh2', 'atp', 'h2o'];
+  const OUT_LABEL = { co2: 'CO₂', nadh: 'NADH', fadh2: 'FADH₂', atp: 'ATP(GTP)', h2o: 'H₂O' };
+  function outText(out) {
+    const parts = Object.entries(out).map(([k, v]) => (k === 'h2o' ? `H₂O ${-v}개 들어감` : `${OUT_LABEL[k]} ${v}개${k === 'co2' ? ' 나감' : ' 생성'}`));
+    return parts.length ? parts.join(', ') : '부산물 없음';
+  }
+  function firePathway() {
+    if (S.busy || S.shotsLeft <= 0) return;
+    let fn;
+    try { fn = parse($('fx').value); fn(stage.shooter.x); }
+    catch (err) { $('fx-error').textContent = err.message; return; }
+    if (stage.predictLedger && !S.ledgerPred) {
+      const vals = LEDGER_KEYS.map(k => $('lp-' + k).value.trim());
+      if (vals.some(v => v === '')) { $('fx-error').textContent = '발사 전에 한 바퀴의 수지를 먼저 예측하세요(④).'; return; }
+      S.ledgerPred = Object.fromEntries(LEDGER_KEYS.map((k, i) => [k, +vals[i]]));
+      document.querySelectorAll('#ledger-predict-block input').forEach(el => { el.disabled = true; });
+      addLog('', `예측 기록: CO₂ ${S.ledgerPred.co2}, NADH ${S.ledgerPred.nadh}, FADH₂ ${S.ledgerPred.fadh2}, ATP ${S.ledgerPred.atp}, H₂O ${S.ledgerPred.h2o}`);
+    }
+    $('fx-error').textContent = '';
+    const res = Engine.simulatePathway(stage, { fn });
+    S.busy = true; $('btn-fire').disabled = true;
+    const toast = $('toast'); toast.innerHTML = ''; toast.hidden = true; delete toast.dataset.level;
+    S.shotsLeft--;
+    S.molecule = stage.start;
+    S.liveLedger = { co2: 0, nadh: 0, fadh2: 0, atp: 0, h2o: 0 };
+    addLog('shot', `#${stage.shots - S.shotsLeft} ${MOLECULES[stage.start].name} 발사 · y = ${$('fx').value.trim()}`);
+    const rej = res.events.find(ev => ev.type === 'reject');
+    if (rej) S.reasons[rej.reason] = (S.reasons[rej.reason] || 0) + 1;
+    S.shots.push({
+      f: $('fx').value.trim(), stop: res.stop.type, completed: res.completed, finalMolecule: res.molecule,
+      reason: rej ? rej.reason : null, rejectedAt: rej ? stage.gates[rej.gate].enz : null, ledger: res.ledger,
+      prediction: null, predictionCorrect: null,
+    });
+    if (res.completed) S.completedLedger = res.ledger;
+
+    const proj = { trail: [res.points[0]], color: MOLECULES[stage.start].color, label: MOLECULES[stage.start].name };
+    let i = 0, ei = 0;
+    const SPEED = 7;
+    function frame() {
+      const next = Math.min(res.points.length - 1, i + SPEED);
+      for (; i <= next; i++) {
+        proj.trail.push(res.points[i]);
+        while (ei < res.events.length && res.events[ei].i <= i) {
+          const ev = res.events[ei], gt = ev.gate != null ? stage.gates[ev.gate] : null;
+          if (ev.type === 'convert') {
+            const def = GATES[gt.enz], a = MOLECULES[ev.from], b = MOLECULES[ev.to];
+            S.molecule = ev.to;
+            proj.color = b.color; proj.label = b.name;
+            for (const [k, v] of Object.entries(ev.out)) {
+              S.liveLedger[k] += v;
+              if (k === 'h2o') floatText(ev.x - 0.8, ev.y - 1.2, 'H₂O ↓', '#0284c7', -1.2);
+              else for (let n = 0; n < v; n++) floatText(ev.x + n * 0.6, ev.y + 0.6, OUT_LABEL[k], k === 'co2' ? '#6b7280' : '#15803d', -1.4);
+            }
+            addLog('ok', `✔ ${def.name}: ${a.name}(${a.C}C) → ${b.name}(${b.C}C). ${outText(ev.out)}. ${def.note}`);
+            drawDiagram();
+          } else if (ev.type === 'reject') {
+            const def = GATES[gt.enz], a = MOLECULES[ev.from];
+            addLog('bad', ev.reason === 'inhibited'
+              ? `✖ ${def.name}의 활성 부위를 말론산이 차지하고 있습니다(경쟁적 저해). ${josa(a.name, '이/가')} 결합하지 못하고 튕겨 나갑니다.`
+              : `✖ ${def.name}의 기질은 ${MOLECULES[def.from].name}입니다. 지금 분자는 ${josa(a.name, '이라/라')} 결합하지 못하고 튕겨 나갑니다.`);
+          } else if (ev.type === 'complete') {
+            addLog('ok', `★ 목표 도달: ${MOLECULES[stage.target].name}!`);
+          }
+          ei++;
+        }
+      }
+      stepParticles();
+      drawField(proj);
+      if (i < res.points.length) requestAnimationFrame(frame);
+      else {
+        if (!res.completed && !rej) {
+          const m = MOLECULES[res.molecule];
+          addLog('warn', `◎ 분자가 ${m.name}(${m.C}C)에서 멈춰 있습니다. 다음 단계에 필요한 효소 관문을 지나지 못했습니다.`);
+        }
+        finishShot(res, proj);
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
   function finishShot(res, proj) {
     const stopMsg = {
       wall: '막에 부딪혀 멈췄습니다.', out: '궤적이 화면 밖으로 나갔습니다.', edge: '오른쪽 끝에 도달했습니다.',
-      undefined: '함수값이 정의되지 않는 곳(0으로 나누기, 음수의 제곱근 등)에서 궤적이 끊겼습니다.', bounce: null,
+      undefined: '함수값이 정의되지 않는 곳(0으로 나누기, 음수의 제곱근 등)에서 궤적이 끊겼습니다.', bounce: null, reject: null,
     }[res.stop.type];
     if (stopMsg) addLog('', stopMsg);
+    if (res.nearMiss) addLog('warn', nearMissText(res.nearMiss, res.stop));
     const last = S.shots[S.shots.length - 1];
     if (last.predictionCorrect !== null) addLog(last.predictionCorrect ? 'ok' : 'warn', `예측 ${last.predictionCorrect ? '적중' : '빗나감'} — 에너지 도표로 이유를 확인하세요.`);
     S.history.push(proj.trail);
@@ -481,8 +690,21 @@
     settle();
     drawDiagram();
     S.busy = false; $('btn-fire').disabled = false;
-    if (!S.alive.length) endStage(true);
+    const cleared = isPW() ? res.completed : !S.alive.length;
+    if (cleared) endStage(true);
     else if (S.shotsLeft <= 0) endStage(false);
+  }
+
+  // 그래프 읽기 언어로 빗나간 정도를 알려 준다. 정답 수식은 알려 주지 않는다.
+  function nearMissText(nm, stop) {
+    const b = stage.blocks[nm.block], name = SUBSTRATES[b.sub].name;
+    const where = `${name}(${b.x}, ${b.y})`;
+    if (nm.crossY === null) {
+      return `◎ 가장 가까운 기질은 ${where}입니다. 궤적이 x = ${stop.x.toFixed(1)}에서 끝나 x = ${b.x}까지 가지 못했습니다.`;
+    }
+    const dy = nm.crossY - b.y;
+    const dir = dy > 0 ? '위로' : '아래로';
+    return `◎ 가장 가까운 기질은 ${where}입니다. 궤적은 x = ${b.x}에서 y = ${nm.crossY.toFixed(1)}을 지나, ${Math.abs(dy).toFixed(1)}칸 ${dir} 빗나갔습니다.`;
   }
 
   /* ---------- 스테이지 종료 ---------- */
@@ -501,6 +723,7 @@
       at: new Date().toISOString(), cleared, stars, shotsUsed: used, par: stage.par, damage: S.damage,
       seconds: Math.round((Date.now() - S.startedAt) / 1000), reasons: S.reasons, predictions: S.predictions,
       helpOpened: S.helpOpened, shots: S.shots, reflection: '',
+      ...(isPW() ? { ledger: S.completedLedger, ledgerPrediction: S.ledgerPred } : {}),
     };
     const rec = store.stages[stage.id] || { best: 0, attempts: [] };
     rec.attempts.push(attempt);
@@ -509,12 +732,30 @@
     save();
 
     const reasonsTxt = Object.entries(S.reasons).filter(([k]) => REASON_LABEL[k]).map(([k, v]) => `${REASON_LABEL[k]} ${v}`).join(', ') || '없음';
+    const pw = isPW();
+    const msg = pw
+      ? (cleared ? `${MOLECULES[stage.target].name}에 도달했습니다.` : `발사를 모두 썼습니다. 목표 분자 ${MOLECULES[stage.target].name}에 도달하지 못했습니다.`)
+      : (cleared ? '모든 기질을 분해했습니다.' : `발사를 모두 썼습니다. 남은 기질 ${S.alive.length}개.`);
+    let cmp = '';
+    if (pw && S.ledgerPred) {
+      const act = S.completedLedger;
+      cmp = `<table class="cmp-table"><tr><th></th>${LEDGER_KEYS.map(k => `<th>${OUT_LABEL[k]}${k === 'h2o' ? ' 들어감' : ''}</th>`).join('')}</tr>
+        <tr><td>예측</td>${LEDGER_KEYS.map(k => `<td>${S.ledgerPred[k]}</td>`).join('')}</tr>
+        <tr><td>실제</td>${LEDGER_KEYS.map(k => {
+          if (!act) return '<td>-</td>';
+          const v = k === 'h2o' ? -act[k] : act[k];
+          return `<td class="${v === S.ledgerPred[k] ? 'hit' : 'miss'}">${v}</td>`;
+        }).join('')}</tr></table>`;
+      attempt.ledgerPredictionHits = act ? LEDGER_KEYS.filter(k => (k === 'h2o' ? -act[k] : act[k]) === S.ledgerPred[k]).length : null;
+      save();
+    }
     const body = `
       ${starsHTML(stars, true)}
-      <p>${cleared ? '모든 기질을 분해했습니다.' : `발사를 모두 썼습니다. 남은 기질 ${S.alive.length}개.`}</p>
+      <p>${msg}</p>
+      ${cmp}
       <div class="stat-grid">
         <div class="stat">사용한 발사<b>${used} / 목표 ${stage.par}</b></div>
-        <div class="stat">세포 손상<b>${S.damage}</b></div>
+        ${pw ? '' : `<div class="stat">세포 손상<b>${S.damage}</b></div>`}
         <div class="stat">실패 원인<b style="font-size:14px">${reasonsTxt}</b></div>
         ${stage.predict ? `<div class="stat">예측 적중<b>${S.predictions.correct} / ${S.predictions.total}</b></div>` : ''}
       </div>
@@ -563,7 +804,8 @@
         <tr><td><code>exp(0.3x)</code></td><td>지수 함수 — 뒤로 갈수록 급상승</td></tr>
       </table>
       <p>쓸 수 있는 것: <code>+ - * / ^ ( )</code>, <code>sin cos tan abs sqrt exp ln log pi e</code>. <code>2x</code>처럼 곱셈 기호를 생략해도 됩니다.</p>
-      <p><b>반응 규칙</b>: 분자 에너지(=온도) ≥ 유효 활성화 에너지. 효소는 맞는 기질·변성 안 됨·알맞은 pH일 때만 장벽을 낮춥니다.</p>`,
+      <p><b>1부 반응 규칙</b>: 분자 에너지(=온도) ≥ 유효 활성화 에너지. 효소는 맞는 기질·변성 안 됨·알맞은 pH일 때만 장벽을 낮춥니다.</p>
+      <p><b>2부 경로 규칙</b>: 분자는 지금 자기를 기질로 삼는 효소 관문만 통과하며 다음 중간 산물로 바뀝니다. 맞지 않거나 억제된 관문에 닿으면 튕겨 나갑니다. 한 줄에서 관문 하나만 지나가도록 궤적을 설계하세요.</p>`,
       [{ label: '닫기', cls: 'primary' }]);
   }
 

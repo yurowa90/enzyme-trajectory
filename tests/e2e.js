@@ -13,8 +13,34 @@ const D = require('../js/data.js');
   await page.fill('#in-sid', '10315'); await page.fill('#in-name', '테스트');
   await page.screenshot({ path: `${out}/01-start.png`, fullPage: true });
   const waitIdle = () => page.waitForFunction(() => !document.getElementById('btn-fire').disabled);
+  const stageBtn = id => page.locator('#stage-list button.stage-item').nth(id - 1);
   for (const st of D.STAGES) {
-    await page.click(`#stage-list li:nth-child(${st.id}) button`);
+    await stageBtn(st.id).click();
+    if (st.type === 'pathway') {
+      if (st.id === 9) { // 억제 관문 먼저 맞혀 보기
+        await page.fill('#fx', '-1.2595(x-1) + 0.1079(x-1)^2'); await page.click('#btn-fire'); await waitIdle();
+        console.log('stage9 inhibited →', (await page.textContent('#log')).includes('말론산이 차지') ? 'OK' : 'MISSING');
+        await page.screenshot({ path: `${out}/10-stage9-inhibited.png` });
+      }
+      if (st.predictLedger) for (const [k, v] of Object.entries({ co2: 2, nadh: 3, fadh2: 1, atp: 1, h2o: 1 })) await page.fill('#lp-' + k, String(v));
+      await page.fill('#fx', st.solution[0].f);
+      await page.click('#btn-fire');
+      await page.waitForSelector('#modal:not([hidden])');
+      if (st.id === 10) {
+        await page.screenshot({ path: `${out}/11-stage10-modal.png` });
+        const hits = await page.$$eval('.cmp-table .hit', els => els.length);
+        console.log('stage10 prediction hits (h2o 오답 의도) →', hits);
+      }
+      console.log(`stage ${st.id}: ${await page.textContent('#modal-title')} / ${await page.$eval('.big-stars', el => el.getAttribute('aria-label'))}`);
+      if (st.id === 10) {
+        await page.click('#modal-actions button:has-text("다시 하기")');
+        await page.screenshot({ path: `${out}/12-stage10-field.png` });
+        await page.click('#btn-back');
+      } else {
+        await page.click('#modal-actions button:has-text("목록")');
+      }
+      continue;
+    }
     // 스테이지 3: 먼저 5°C 저온 실패를 재현
     if (st.id === 3) {
       await page.fill('#fx', '0'); await page.check('input[value="react"]');
@@ -49,7 +75,7 @@ const D = require('../js/data.js');
   // 모바일
   const m = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await m.goto('file://' + path.resolve(__dirname, '../index.html'));
-  await m.click('#stage-list li:nth-child(1) button');
+  await m.locator('#stage-list button.stage-item').first().click();
   await m.fill('#fx', 'x^'); await m.click('#btn-fire');
   console.log('parse error shown →', await m.textContent('#fx-error'));
   const overflow = await m.evaluate(() => document.documentElement.scrollWidth > innerWidth);
@@ -58,7 +84,7 @@ const D = require('../js/data.js');
   // 다크 모드
   const d = await browser.newPage({ viewport: { width: 1360, height: 900 }, colorScheme: 'dark' });
   await d.goto('file://' + path.resolve(__dirname, '../index.html'));
-  await d.click('#stage-list li:nth-child(1) button');
+  await d.locator('#stage-list button.stage-item').first().click();
   await d.screenshot({ path: `${out}/09-dark.png` });
   console.log('errors:', errors.length ? errors : 'none');
   await browser.close();

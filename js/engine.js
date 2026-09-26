@@ -45,6 +45,8 @@
 
     let denatured = shot.enzyme !== 'heat' && shot.T >= D.ENZYMES[shot.enzyme].denatureT;
     const aliveSet = new Set(alive);
+    const near = {}; // 빗나감 분석: 블록별 최소 간격과 x=블록 중심에서의 궤적 y
+    alive.forEach(bi => { near[bi] = { gap: Infinity, crossY: null }; });
     let lastPH = null;
     const DX = 0.01, STEP = 0.04;
     let prev = { x: x0, y: y0 };
@@ -85,6 +87,11 @@
             break outer;
           }
         }
+        for (const bi of aliveSet) {
+          const b = stage.blocks[bi], nb = near[bi];
+          nb.gap = Math.min(nb.gap, Math.hypot(px - b.x, py - b.y) - b.r - PROJ_R);
+          if (nb.crossY === null && px >= b.x) nb.crossY = py;
+        }
         // 기질 블록
         for (const bi of aliveSet) {
           const b = stage.blocks[bi];
@@ -105,9 +112,69 @@
       prev = { x, y };
     }
     if (!res.stop) res.stop = { type: 'edge', x: prev.x, y: prev.y };
+    // 아무 기질에도 닿지 않았으면 가장 가까이 지나간 기질을 알려 준다(조준 피드백)
+    if (!res.events.some(ev => ev.type === 'react' || ev.type === 'bounce') && alive.length) {
+      const bi = alive.reduce((a, c) => (near[c].gap < near[a].gap ? c : a));
+      res.nearMiss = { block: bi, gap: near[bi].gap, crossY: near[bi].crossY };
+    }
     return res;
   }
 
-  root.Engine = { simulate, evaluate, X_MIN, X_MAX, Y_MIN, Y_MAX, PROJ_R };
+  /* 2부: 경로(pathway) 판정 — 발사체는 분자, 관문은 고정된 효소.
+   * 관문 효소의 기질(from) = 현재 분자 && 억제되지 않음 → 전환, 부산물 기록
+   * 그 밖의 관문 → 튕겨 나가 정지
+   */
+  function simulatePathway(stage, shot) {
+    const { x: x0, y: y0 } = stage.shooter;
+    const f0 = shot.fn(x0);
+    const res = { points: [], events: [], stop: null, molecule: stage.start, ledger: { co2: 0, nadh: 0, fadh2: 0, atp: 0, h2o: 0 }, completed: false };
+    if (!isFinite(f0)) { res.stop = { type: 'undefined', x: x0, y: y0 }; return res; }
+    const touched = new Set();
+    const DX = 0.01, STEP = 0.04;
+    let prev = { x: x0, y: y0 };
+    res.points.push(prev);
+    outer:
+    for (let x = x0 + DX; x <= X_MAX + 1e-9; x += DX) {
+      const y = shot.fn(x) - f0 + y0;
+      if (!isFinite(y)) { res.stop = { type: 'undefined', x: prev.x, y: prev.y }; break; }
+      const n = Math.max(1, Math.ceil(Math.hypot(x - prev.x, y - prev.y) / STEP));
+      for (let k = 1; k <= n; k++) {
+        const px = prev.x + (x - prev.x) * k / n, py = prev.y + (y - prev.y) * k / n;
+        res.points.push({ x: px, y: py });
+        if (py < Y_MIN || py > Y_MAX) { res.stop = { type: 'out', x: px, y: py }; break outer; }
+        const idx = res.points.length - 1;
+        for (const w of stage.walls || []) {
+          if (inRect(px, py, w, PROJ_R)) { res.stop = { type: 'wall', x: px, y: py }; break outer; }
+        }
+        for (let gi = 0; gi < stage.gates.length; gi++) {
+          if (touched.has(gi)) continue;
+          const gt = stage.gates[gi];
+          if (Math.hypot(px - gt.x, py - gt.y) > gt.r + PROJ_R) continue;
+          touched.add(gi);
+          const def = D.GATES[gt.enz];
+          const from = res.molecule;
+          if (def.from === from && !gt.inhibitor) {
+            res.molecule = def.to;
+            for (const [k2, v] of Object.entries(def.out)) res.ledger[k2] += v;
+            res.events.push({ type: 'convert', i: idx, x: px, y: py, gate: gi, from, to: def.to, out: def.out });
+            if (res.molecule === stage.target) {
+              res.completed = true;
+              res.events.push({ type: 'complete', i: idx, x: px, y: py });
+            }
+          } else {
+            const reason = def.from === from ? 'inhibited' : 'wrong';
+            res.events.push({ type: 'reject', i: idx, x: px, y: py, gate: gi, from, reason });
+            res.stop = { type: 'reject', x: px, y: py, gate: gi };
+            break outer;
+          }
+        }
+      }
+      prev = { x, y };
+    }
+    if (!res.stop) res.stop = { type: 'edge', x: prev.x, y: prev.y };
+    return res;
+  }
+
+  root.Engine = { simulate, simulatePathway, evaluate, X_MIN, X_MAX, Y_MIN, Y_MAX, PROJ_R };
   if (typeof module !== 'undefined') module.exports = root.Engine;
 })(typeof window !== 'undefined' ? window : globalThis);

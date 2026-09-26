@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>효소 궤적</title>
-  <meta name="description" content="수식으로 궤적을 설계해 효소를 쏘고, 활성화 에너지 장벽을 넘어 기질을 분해하는 통합과학 게임">
+  <meta name="description" content="수식으로 궤적을 설계해 효소의 성질과 TCA 회로 물질대사를 배우는 과학 게임">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <!-- 시작 화면 -->
   <section id="screen-start" class="screen active">
     <div class="start-wrap">
-      <p class="eyebrow">고1 통합과학 · 효소와 활성화 에너지</p>
+      <p class="eyebrow">효소의 성질(고1 통합과학) · 물질대사 TCA 회로(생명과학 심화)</p>
       <h1>효소 궤적</h1>
       <p class="lead">수식 <b>y = f(x)</b>로 궤적을 그려 효소를 쏘세요.<br>
         효소가 기질에 닿으면 <b>활성화 에너지 장벽</b>이 낮아지고, 분자 에너지가 그 장벽을 넘을 때 반응이 일어납니다.</p>
@@ -39,8 +39,8 @@
       <div class="stage-name"><span id="hud-stage-no"></span><b id="hud-stage-title"></b></div>
       <div class="hud">
         <span title="남은 발사 수">발사 <b id="hud-shots"></b></span>
-        <span title="남은 기질">기질 <b id="hud-left"></b></span>
-        <span title="50°C 이상으로 쏜 횟수">세포 손상 <b id="hud-damage"></b></span>
+        <span title="남은 기질 / 목표 분자"><span id="hud-left-label">기질</span> <b id="hud-left"></b></span>
+        <span title="50°C 이상으로 쏜 횟수" id="hud-damage-wrap">세포 손상 <b id="hud-damage"></b></span>
       </div>
     </header>
     <div class="game-body">
@@ -51,7 +51,7 @@
       </div>
       <aside class="panel">
         <div class="panel-block">
-          <div class="panel-label">① 효소 장전</div>
+          <div class="panel-label" id="enzyme-label">① 효소 장전</div>
           <div id="enzyme-list" class="enzyme-list" role="radiogroup" aria-label="효소 선택"></div>
         </div>
         <div class="panel-block" id="temp-block">
@@ -72,9 +72,19 @@
             <label><input type="radio" name="predict" value="bounce"> 분해 안 된다</label>
           </div>
         </div>
+        <div class="panel-block" id="ledger-predict-block" hidden>
+          <div class="panel-label">④ 예측: 회로 한 바퀴의 수지는?</div>
+          <div class="ledger-grid">
+            <label>CO₂ 나감 <input type="number" min="0" max="9" id="lp-co2"></label>
+            <label>NADH <input type="number" min="0" max="9" id="lp-nadh"></label>
+            <label>FADH₂ <input type="number" min="0" max="9" id="lp-fadh2"></label>
+            <label>ATP(GTP) <input type="number" min="0" max="9" id="lp-atp"></label>
+            <label>H₂O 들어감 <input type="number" min="0" max="9" id="lp-h2o"></label>
+          </div>
+        </div>
         <button id="btn-fire" class="btn primary fire" type="button">발사 <kbd>Enter</kbd></button>
         <div class="panel-block">
-          <div class="panel-label">에너지 도표 <select id="diagram-sub" aria-label="도표로 볼 기질"></select></div>
+          <div class="panel-label"><span id="diagram-label">에너지 도표</span> <select id="diagram-sub" aria-label="도표로 볼 기질"></select></div>
           <canvas id="diagram" width="360" height="210" aria-label="에너지 도표"></canvas>
           <div id="diagram-verdict" class="diagram-verdict"></div>
         </div>
